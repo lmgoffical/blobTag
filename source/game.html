@@ -50,6 +50,18 @@ input:focus-visible, button:focus-visible, select:focus-visible { outline: 3px s
 #board .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #board li.it .nm { color: var(--it); font-weight: 700; }
 #board .tm { color: var(--ink-dim); }
+#clock {
+  top: calc(64px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); font-family: var(--display); font-size: 18px;
+  padding: 4px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-variant-numeric: tabular-nums;
+}
+#clock.low { color: var(--it); }
+#over { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 16px; pointer-events: none; background: rgba(8, 5, 20, 0.45); }
+#over .card { width: min(340px, 100%); }
+#over h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 28px; text-wrap: balance; }
+#over ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-variant-numeric: tabular-nums; }
+#over li { display: flex; gap: 10px; }
+#over li span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#over li:first-child { color: var(--go); font-weight: 700; }
 #aim { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: var(--ink); opacity: 0.7; box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
 #net {
   bottom: calc(10px + env(safe-area-inset-bottom, 0px)); left: max(12px, env(safe-area-inset-left, 0px));
@@ -150,7 +162,7 @@ select option { color: #111; }
       <button id="gChars" type="button">Detailed characters: on</button>
       <button id="gRes" type="button">Sharpness: full</button>
       <div class="lab">Controls</div>
-      <p>Move: WASD or arrows. Jump: space. To bunny hop, press jump again as you land and strafe in the air (A or D while turning that way). Slide or crouch: Shift, the only way through the low holes in walls. Ladders: walk into them. Power: E. Taunt: T. Menu: Esc.</p>
+      <p>Move: WASD or arrows. Jump: space. To bunny hop, press jump again as you land and strafe in the air (A or D while turning that way). Slide or crouch: Shift, the only way through the low holes in walls. Ladders: walk into them. Power: E. Whistle: T (everyone hears which direction it came from). Menu: Esc.</p>
       <button id="sBack" type="button">Back</button>
     </div>
     <div id="pSetup" class="pcol" hidden>
@@ -160,7 +172,8 @@ select option { color: #111; }
       <button id="optMap" type="button">Map: Block Yard</button>
       <button id="optSize" type="button">Map size: auto</button>
       <button id="optPowers" type="button">Powers: on</button>
-      <button id="optTaunt" type="button">Forced taunts: off</button>
+      <button id="optTaunt" type="button">Forced whistles: off</button>
+      <button id="optLen" type="button">Round length: 3 min</button>
       <button id="gBack" type="button">Back</button>
     </div>
   </div>
@@ -168,13 +181,21 @@ select option { color: #111; }
 
 <div id="stick" hidden><i></i></div>
 <div id="actions" hidden>
-  <button id="taunt" type="button">Taunt<small>T</small></button>
+  <button id="taunt" type="button">Whistle<small>T</small></button>
   <button id="power" type="button" disabled>No power<small>find a ? box</small></button>
   <button id="slide" type="button" hidden>Slide</button>
   <button id="jump" type="button" hidden>Jump</button>
 </div>
 
 <div id="aim" class="hud" hidden></div>
+<div id="clock" class="hud" hidden></div>
+<div id="over" hidden>
+  <div class="card">
+    <h2 id="overT">Round over</h2>
+    <ol id="overRows"></ol>
+    <p id="overNext"></p>
+  </div>
+</div>
 <div id="blind" hidden><div><b id="blindN">8</b><span>You're the seeker. No peeking while they hide!</span></div></div>
 
 <div id="menu">
@@ -220,13 +241,18 @@ select option { color: #111; }
         <label for="hPow">Powers
           <select id="hPow"><option value="1">On</option><option value="0">Off</option></select>
         </label>
-        <label for="hTaunt">Forced taunts
+        <label for="hTaunt">Forced whistles
           <select id="hTaunt"><option value="0">Off</option><option value="30">Every 30s</option><option value="15">Every 15s</option></select>
         </label>
       </div>
-      <label for="hCode">Room code to give your friends
-        <input id="hCode" maxlength="20" autocomplete="off">
-      </label>
+      <div class="row2">
+        <label for="hLen">Round length
+          <select id="hLen"><option value="120">2 minutes</option><option value="180" selected>3 minutes</option><option value="300">5 minutes</option><option value="600">10 minutes</option></select>
+        </label>
+        <label for="hCode">Room code
+          <input id="hCode" maxlength="20" autocomplete="off">
+        </label>
+      </div>
     </div>
     <div id="joinBox" hidden>
       <label for="code">Room code from the host
@@ -839,6 +865,39 @@ select option { color: #111; }
     seeker: function () { tone(400, 120, 0.5, "sawtooth", 1, 0); },
     blast: function (v) { tone(900, 90, 0.5, "sine", v, 0); }
   };
+  // The whistle is placed in 3D at the whistler, so listeners hear which direction it came from (best with headphones).
+  function setXYZ(node, a, b, c, x, y, z) {
+    if (node[a]) { node[a].value = x; node[b].value = y; node[c].value = z; return true; }
+    return false;
+  }
+  function whistle(p) {
+    if (!ac || opts.vol <= 0) { return; }
+    try {
+      var t = ac.currentTime + 0.02, o = ac.createOscillator(), g = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain(), out = g;
+      var v = (p === me ? 0.25 : 0.6) * opts.vol / 100;
+      o.type = "sine";
+      o.frequency.setValueAtTime(1500, t); o.frequency.exponentialRampToValueAtTime(2500, t + 0.16); o.frequency.setValueAtTime(2500, t + 0.3);
+      o.frequency.setValueAtTime(1900, t + 0.42); o.frequency.exponentialRampToValueAtTime(2600, t + 0.52); o.frequency.exponentialRampToValueAtTime(1400, t + 0.88);
+      lfo.frequency.value = 7; lg.gain.value = 25; lfo.connect(lg); lg.connect(o.frequency);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + 0.04); g.gain.setValueAtTime(v, t + 0.28); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
+      g.gain.exponentialRampToValueAtTime(v, t + 0.46); g.gain.setValueAtTime(v, t + 0.72); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.92);
+      o.connect(g);
+      if (p !== me && ac.createPanner) {
+        var pn = ac.createPanner(); pn.panningModel = "HRTF"; pn.distanceModel = "linear"; pn.refDistance = 3; pn.maxDistance = HALF * 3.2; pn.rolloffFactor = 0.9;
+        if (!setXYZ(pn, "positionX", "positionY", "positionZ", p.x, p.y + 1.5, p.z)) { pn.setPosition(p.x, p.y + 1.5, p.z); }
+        g.connect(pn); out = pn;
+      }
+      out.connect(ac.destination); o.start(t); lfo.start(t); o.stop(t + 0.96); lfo.stop(t + 0.96);
+    } catch (err) {}
+  }
+  function setListener() {
+    if (!ac || !ac.listener) { return; }
+    var L = ac.listener, cp = Math.cos(pitch), fx = -Math.sin(yaw) * cp, fy = -Math.sin(pitch), fz = -Math.cos(yaw) * cp, c = camera.position;
+    try {
+      if (!setXYZ(L, "positionX", "positionY", "positionZ", c.x, c.y, c.z)) { L.setPosition(c.x, c.y, c.z); }
+      if (setXYZ(L, "forwardX", "forwardY", "forwardZ", fx, fy, fz)) { setXYZ(L, "upX", "upY", "upZ", 0, 1, 0); } else { L.setOrientation(fx, fy, fz, 0, 1, 0); }
+    } catch (err) {}
+  }
   function volAt(x, z) { return Math.max(0, 1 - Math.hypot(x - me.x, z - me.z) / 38); }
 
   // ---------- state ----------
@@ -846,13 +905,16 @@ select option { color: #111; }
   var others = {};          // id -> player (remote friends, or practice bots)
   var playing = false, room = null, lobby = null, offline = false;
   var frozenUntil = 0, blindUntil = 0, tagCooldown = 0, tauntCooldown = 0, counters = { tg: 0, rs: 0, pk: 0, fx: 0, ta: 0 };
-  var held = null, effect = null, cfg = { v: 0, pw: true, map: 0, ft: 0, sz: 0, az: true, rd: 0 }, padCooldown = 0, forcedAt = 0, forcedFor = 0;
+  var held = null, effect = null, cfg = { v: 0, pw: true, map: 0, ft: 0, sz: 0, az: true, rd: 0, rl: 180 }, padCooldown = 0, forcedAt = 0, forcedFor = 0;
   function setCfg(patch) {
-    var n = { v: cfg.v + 1, pw: cfg.pw, map: cfg.map, ft: cfg.ft, sz: cfg.sz, az: cfg.az, rd: cfg.rd };
+    var n = { v: cfg.v + 1, pw: cfg.pw, map: cfg.map, ft: cfg.ft, sz: cfg.sz, az: cfg.az, rd: cfg.rd, rl: cfg.rl };
     for (var k in patch) { n[k] = patch[k]; }
     cfg = n;
   }
   // Map size follows the player count when it is on auto. It is only re-checked when a round starts, so the map never changes mid-chase.
+  // A round runs on the host's clock. When it hits zero the player with the least time as seeker wins, and the next round starts by itself.
+  var LENGTHS = [120, 180, 300, 600], roundLeft = 180, roundOver = false, overUntil = 0, results = null, hostClock = -1;
+  function nextRound() { autoSize(); setCfg({ rd: cfg.rd + 1 }); randomSeeker(); }
   function sizeFor(n) { return n <= 4 ? 0 : (n <= 8 ? 1 : 2); }
   function autoSize() { if (cfg.az) { var want = sizeFor(everyone().length); if (want !== cfg.sz) { setCfg({ sz: want }); } } }
   var SPEED_LIMIT = 1.3;   // top speed as a multiple of normal running speed
@@ -886,9 +948,8 @@ select option { color: #111; }
     held = null; effect = null; sfx.seeker();
   }
   function startTaunt(p, i, now) {
-    p.tauntUntil = now + 2200;
-    if (p.bubble) { p.bubble.material.map = tauntTex[Math.abs(i | 0) % TAUNTS.length]; }
-    sfx.taunt(p === me ? 1 : volAt(p.x, p.z));
+    p.tauntUntil = now + 1200;
+    whistle(p);
   }
 
   // ---------- practice bots (only when the live room is unavailable) ----------
@@ -961,8 +1022,9 @@ select option { color: #111; }
       p.tx = num(ps.x, 0); p.ty = num(ps.y, 0); p.tz = num(ps.z, 0); p.tr = num(ps.r, 0);
       p.seq = Math.max(0, Math.floor(num(ps.s, 0))); p.t = Math.max(0, num(ps.t, 0));
       p.e = typeof ps.e === "string" && EFFECTS[ps.e] ? ps.e : null; p.q = !!ps.q; p.sl = ps.sl === 1 || ps.sl === 2 ? ps.sl : 0; p.ho = !!ps.ho;
+      p.rn = ps.rn && typeof ps.rn === "object" ? { n: num(ps.rn.n, -1), l: Math.max(0, Math.min(600, num(ps.rn.l, 0))), o: ps.rn.o === 1 ? 1 : 0 } : null;
       var c = ps.cfg;
-      if (c && typeof c === "object" && num(c.v, 0) > cfg.v) { cfg = { v: Math.floor(c.v), pw: !!c.pw, map: Math.max(0, Math.min(MAPS.length - 1, Math.floor(num(c.map, 0)))), ft: [15, 30].indexOf(c.ft) >= 0 ? c.ft : 0, sz: Math.max(0, Math.min(2, Math.floor(num(c.sz, 0)))), az: !!c.az, rd: Math.max(0, Math.floor(num(c.rd, 0))) }; }
+      if (c && typeof c === "object" && num(c.v, 0) > cfg.v) { cfg = { v: Math.floor(c.v), pw: !!c.pw, map: Math.max(0, Math.min(MAPS.length - 1, Math.floor(num(c.map, 0)))), ft: [15, 30].indexOf(c.ft) >= 0 ? c.ft : 0, sz: Math.max(0, Math.min(2, Math.floor(num(c.sz, 0)))), az: !!c.az, rd: Math.max(0, Math.floor(num(c.rd, 0))), rl: LENGTHS.indexOf(c.rl) >= 0 ? c.rl : 180 }; }
       ["tg", "rs", "pk", "fx", "ta"].forEach(function (name) {
         var ev = ps[name], k = evKey(ev);
         if (k === undefined || p.ev[name] === k) { return; }
@@ -1000,7 +1062,7 @@ select option { color: #111; }
     if (!room || !playing) { return; }
     room.presence({
       n: me.name, c: me.hue, h: me.hat, x: r2(me.x), y: r2(me.y), z: r2(me.z), r: r2(me.r), s: me.seq, t: Math.round(me.t),
-      e: me.e, q: wasIt && now < frozenUntil, sl: me.sl || null, ho: me.ho ? 1 : null, cfg: cfg,
+      e: me.e, q: wasIt && now < frozenUntil, sl: me.sl || null, ho: me.ho ? 1 : null, rn: iAmHost ? { n: cfg.rd, l: Math.ceil(roundLeft), o: roundOver ? 1 : 0 } : null, cfg: cfg,
       tg: me.tg || null, rs: me.rs || null, pk: me.pk || null, fx: me.fx || null, ta: me.ta || null
     }).catch(function () {});
   }
@@ -1089,7 +1151,7 @@ select option { color: #111; }
   $("gBack").addEventListener("click", function () { showPage("pMain"); });
   $("optSkip").addEventListener("click", function () {
     if (!iAmHost) { return; }
-    autoSize(); setCfg({ rd: cfg.rd + 1 }); randomSeeker(); closePause(true);
+    nextRound(); closePause(true);
   });
   // Back to the main menu: tell the room you are gone, drop your character and show the join card again.
   function leaveGame() {
@@ -1106,7 +1168,7 @@ select option { color: #111; }
     me.seq = 0; me.t = 0; me.vx = me.vz = 0; me.sl = 0; me.tg = me.rs = me.pk = me.fx = me.ta = null;
     held = null; effect = null; frozenUntil = blindUntil = 0; wasIt = false; lastIt = null; netNote = ""; slideUntil = 0;
     try { if (document.pointerLockElement && document.exitPointerLock) { document.exitPointerLock(); } } catch (err) {}
-    ["status", "board", "net", "menuBtn", "actions", "aim", "blind", "stick", "pause"].forEach(function (id) { $(id).hidden = true; });
+    ["status", "board", "net", "menuBtn", "actions", "aim", "blind", "stick", "pause", "clock", "over"].forEach(function (id) { $(id).hidden = true; });
     paused = false; me.ho = false;
     camera.fov = opts.fov; camera.updateProjectionMatrix();
     $("play").disabled = false; drawTabs(); $("menu").hidden = false;
@@ -1133,6 +1195,7 @@ select option { color: #111; }
   }
   $("optTaunt").addEventListener("click", function () { if (!iAmHost) { return; } setCfg({ ft: cfg.ft === 0 ? 30 : (cfg.ft === 30 ? 15 : 0) }); });
   $("optMap").addEventListener("click", function () { if (!iAmHost) { return; } setCfg({ map: (cfg.map + 1) % MAPS.length }); });
+  $("optLen").addEventListener("click", function () { if (iAmHost) { setCfg({ rl: LENGTHS[(LENGTHS.indexOf(cfg.rl) + 1) % LENGTHS.length] }); roundLeft = Math.min(roundLeft, cfg.rl); } });
   $("optSize").addEventListener("click", function () {
     if (!iAmHost) { return; }
     if (cfg.az) { setCfg({ az: false, sz: 0 }); } else if (cfg.sz < 2) { setCfg({ sz: cfg.sz + 1 }); } else { setCfg({ az: true, sz: sizeFor(everyone().length) }); }
@@ -1222,7 +1285,7 @@ select option { color: #111; }
   function preview() {
     if (playing) { return; }
     var sz = $("hSize").value;
-    cfg = { v: 0, pw: true, map: hosting ? parseInt($("hMap").value, 10) || 0 : 0, ft: 0, sz: hosting && sz !== "auto" ? parseInt(sz, 10) || 0 : 0, az: !hosting || sz === "auto", rd: 0 };
+    cfg = { v: 0, pw: true, map: hosting ? parseInt($("hMap").value, 10) || 0 : 0, ft: 0, sz: hosting && sz !== "auto" ? parseInt(sz, 10) || 0 : 0, az: !hosting || sz === "auto", rd: 0, rl: 180 };
   }
   $("tabHost").addEventListener("click", function () { hosting = true; drawTabs(); preview(); });
   $("tabJoin").addEventListener("click", function () { hosting = false; drawTabs(); preview(); });
@@ -1245,7 +1308,8 @@ select option { color: #111; }
     }).then(function (r) {
       if (r) { useRoom(r); roomLabel = code && r !== lobby ? "Room code " + code : "Public room"; }
       me.ho = asHost;
-      if (asHost) { setCfg({ pw: $("hPow").value === "1", ft: parseInt($("hTaunt").value, 10) || 0 }); }
+      if (asHost) { setCfg({ pw: $("hPow").value === "1", ft: parseInt($("hTaunt").value, 10) || 0, rl: parseInt($("hLen").value, 10) || 180 }); }
+      roundLeft = cfg.rl; roundOver = false; results = null;
       seenRd = cfg.rd;
       spawn(me); makeChar(me); playing = true;
       $("menu").hidden = true;
@@ -1284,9 +1348,9 @@ select option { color: #111; }
       else if (isIt) { arm.rotation.set(-1.45, 0, 0); }
       else { arm.rotation.set(-swing * side, 0, 0); }
     }
-    p.rig.rotation.y = taunting ? now / 110 : 0;
+    p.rig.rotation.y = 0;
     p.rig.rotation.x = p.sl === 1 ? -1.15 : (taunting || p.mixer ? 0 : Math.min(1, sp / 7) * 0.16);
-    p.rig.position.y = p.sl === 1 ? 0.3 : p.mixer ? (taunting ? Math.abs(Math.sin(now / 120)) * 0.25 : 0) : Math.abs(Math.sin(p.walk)) * Math.min(1, sp / 4) * 0.06;
+    p.rig.position.y = p.sl === 1 ? 0.3 : p.mixer ? 0 : Math.abs(Math.sin(p.walk)) * Math.min(1, sp / 4) * 0.06;
     var s = p.e === "tiny" ? 0.45 : 1; p.rig.scale.set(s, s * (p.sl === 2 ? 0.62 : 1), s);
     var hiddenFromMe = p.e === "inv" && p !== me;
     p.rig.visible = !hiddenFromMe; p.label.visible = false;
@@ -1299,14 +1363,14 @@ select option { color: #111; }
     }
     p.ghost = ghost;
     p.cone.visible = isIt; p.cone.position.y = p.top + 0.45 + Math.sin(now / 200) * 0.12; p.cone.rotation.y = now / 300;
-    p.bubble.visible = taunting;
+    p.bubble.visible = false;
     p.beacon.visible = radar && p !== me && !isIt;
   }
 
   var last = performance.now(), hudAt = 0, camTarget = new THREE.Vector3(), fpsFrames = 0, fpsSince = performance.now();
   function frame(now) {
     requestAnimationFrame(frame);
-    var dt = Math.min(0.05, (now - last) / 1000); last = now;
+    var rdt = Math.min(2, (now - last) / 1000), dt = Math.min(0.05, rdt); last = now;     // rdt is real time, so clocks stay right on slow devices
     fpsFrames++;
     if (now - fpsSince > 3000) {
       var fps = fpsFrames * 1000 / (now - fpsSince); fpsFrames = 0; fpsSince = now;
@@ -1326,9 +1390,23 @@ select option { color: #111; }
     }
     hostId = hostP ? hostP.id : null; iAmHost = playing && hostP === me;
     if (cfg.rd !== seenRd) {      // the host skipped the round: everyone starts again from a fresh spot
-      seenRd = cfg.rd;
-      if (playing) { spawn(me); me.vx = me.vz = 0; held = null; effect = null; slideUntil = 0; }
-      for (var rk in others) { if (others[rk].bot) { spawn(others[rk]); } }
+      seenRd = cfg.rd; roundLeft = cfg.rl; roundOver = false; results = null; hostClock = -1;
+      if (playing) { spawn(me); me.vx = me.vz = 0; me.t = 0; held = null; effect = null; slideUntil = 0; }
+      for (var rk in others) { if (others[rk].bot) { spawn(others[rk]); others[rk].t = 0; } }
+    }
+    var hostPeer = hostId && hostId !== me.id ? others[hostId] : null, wasOver = roundOver;
+    if (playing && list.length > 1) {
+      if (iAmHost || !hostPeer) {
+        if (!roundOver) { roundLeft -= rdt; if (roundLeft <= 0) { roundLeft = 0; roundOver = true; overUntil = now + 12000; } }
+        else if (now > overUntil) { nextRound(); }
+      } else if (hostPeer.rn && hostPeer.rn.n === cfg.rd) {
+        if (hostPeer.rn.l !== hostClock) { hostClock = hostPeer.rn.l; roundLeft = hostClock; } else if (!roundOver) { roundLeft = Math.max(0, roundLeft - rdt); }
+        roundOver = hostPeer.rn.o === 1;
+      }
+    }
+    if (roundOver && !wasOver) {
+      overUntil = Math.max(overUntil, now + 12000);
+      results = list.slice().sort(function (a, b) { return a.t - b.t; }).map(function (p) { return { name: p.name, t: Math.round(p.t), hue: p.hue, me: p === me }; });
     }
     currentIt = it ? it.id : null;
     var iAmIt = playing && it === me;
@@ -1347,7 +1425,7 @@ select option { color: #111; }
       // Source-style movement: friction and quick acceleration on the ground, air strafing in the air.
       // Every hop needs its own press. A press up to 200 ms before landing still counts, and friction waits 120 ms after
       // landing, so a slightly early or late press keeps your speed. Speed itself is gained by strafing in the air.
-      var frozen = now < frozenUntil, base = (iAmIt ? 7.6 : 7) * (me.e === "spd" ? 1.6 : 1);
+      var frozen = now < frozenUntil || roundOver, base = (iAmIt ? 7.6 : 7) * (me.e === "spd" ? 1.6 : 1);
       var wx = ix * Math.cos(yaw) + iz * Math.sin(yaw), wz = -ix * Math.sin(yaw) + iz * Math.cos(yaw), wl = Math.hypot(wx, wz);
       var under = lowCeiling(me.x, me.z, me.y), low = !!(keys.ShiftLeft || keys.ShiftRight || keys.KeyC || slideHeld || under), jumpHeld = !!(keys.Space || jumpBtn), jumpNow = !frozen && !under && now - jumpAt < 200;
       var spd = Math.hypot(me.vx, me.vz), sliding = now < slideUntil, lad = null, k;
@@ -1397,8 +1475,8 @@ select option { color: #111; }
         if (now > forcedAt) { taunt(true); forcedAt = now + cfg.ft * 1000; }
       } else { forcedAt = 0; }
 
-      if (iAmIt && list.length > 1) {
-        me.t += dt;
+      if (iAmIt && list.length > 1 && !roundOver) {
+        me.t += rdt;
         if (!frozen && now > tagCooldown) {
           var reach = me.e === "arm" ? 3.3 : 1.5;
           for (var k in others) {
@@ -1431,7 +1509,7 @@ select option { color: #111; }
       }
       publish(now);
     }
-    if (offline) { stepBots(dt, now, it); }
+    if (offline && !roundOver) { stepBots(dt, now, it); }
     var radar = me.e === "rad";
     for (var id in others) {
       var p = others[id];
@@ -1463,7 +1541,7 @@ select option { color: #111; }
       if (Math.abs(camera.fov - fovWant) > 0.05) { camera.fov += (fovWant - camera.fov) * Math.min(1, dt * 6); camera.updateProjectionMatrix(); }
       camera.position.set(me.x, me.y + eyeH, me.z);
       camTarget.set(me.x - Math.sin(yaw) * cp, camera.position.y - Math.sin(pitch), me.z - Math.cos(yaw) * cp);
-      camera.lookAt(camTarget);
+      camera.lookAt(camTarget); setListener();
     } else {
       var t = now / 9000;
       camera.position.set(Math.sin(t) * (HALF + 4), 20, Math.cos(t) * (HALF + 4)); camera.lookAt(0, 0, 0);
@@ -1478,7 +1556,22 @@ select option { color: #111; }
     var st = $("status"), left = Math.ceil((frozenUntil - now) / 1000), blind = now < blindUntil;
     $("blind").hidden = !blind; if (blind) { $("blindN").textContent = String(Math.max(1, left)); }
     st.className = "hud" + (iAmIt && list.length > 1 ? " it" : "");
-    if (list.length < 2) { st.textContent = "Waiting for friends…"; }
+    var ck = $("clock"), secs = Math.ceil(roundLeft), ov = $("over");
+    ck.hidden = list.length < 2; ck.className = "hud" + (secs <= 10 ? " low" : "");
+    ck.textContent = Math.floor(secs / 60) + ":" + (secs % 60 < 10 ? "0" : "") + (secs % 60);
+    ov.hidden = !(roundOver && results);
+    if (roundOver && results) {
+      $("overT").textContent = results.length ? (results[0].me ? "You win the round!" : results[0].name + " wins the round!") : "Round over";
+      var orows = $("overRows"); orows.textContent = "";
+      results.forEach(function (r) {
+        var li = document.createElement("li"), a = document.createElement("span"), b = document.createElement("span");
+        a.textContent = r.name + (r.me ? " (you)" : ""); b.textContent = r.t + "s as seeker"; li.appendChild(a); li.appendChild(b); orows.appendChild(li);
+      });
+      $("overNext").textContent = "Least time as seeker wins. Next round in " + Math.max(0, Math.ceil((overUntil - now) / 1000)) + "s.";
+    }
+    $("optLen").textContent = "Round length: " + (cfg.rl / 60) + " min";
+    if (roundOver) { st.textContent = "Round over"; }
+    else if (list.length < 2) { st.textContent = "Waiting for friends…"; }
     else if (iAmIt) { st.textContent = left > 0 ? "You're the seeker! Go in " + left : "You're the seeker! Tag someone"; }
     else if (left > 0) { st.textContent = "Frozen! " + left; }
     else { st.textContent = (it ? it.name : "Someone") + (it && it.q ? " is counting. Hide!" : " is seeking. Hide!"); }
@@ -1503,7 +1596,7 @@ select option { color: #111; }
     $("optPowers").textContent = "Powers: " + (cfg.pw ? "on" : "off");
     $("optMe").disabled = iAmIt; $("optMap").textContent = "Map: " + MAPS[builtMap].name;
     $("optSize").textContent = "Map size: " + (cfg.az ? "auto (" + SIZE_NAMES[builtSize] + ")" : SIZE_NAMES[builtSize]); drawGfxUi();
-    $("optTaunt").textContent = "Forced taunts: " + (cfg.ft ? "every " + cfg.ft + "s" : "off");
+    $("optTaunt").textContent = "Forced whistles: " + (cfg.ft ? "every " + cfg.ft + "s" : "off");
     $("taunt").lastElementChild.textContent = cfg.ft && !iAmIt && forcedAt ? "auto in " + Math.max(0, Math.ceil((forcedAt - now) / 1000)) + "s" : "T";
 
     $("optSkip").hidden = !iAmHost; $("pSetupBtn").hidden = !iAmHost;
