@@ -3,8 +3,8 @@
 // state about ten times a second; nothing is stored. The key below is a publishable (public) key.
 (function () {
   "use strict";
-  var URL = "https://skxuwfxbtziblfbvkksa.supabase.co";
-  var KEY = "sb_publishable_fcMUfTr78tMyub648U75Zw_4-psgdqg";
+  var URL = "https://muzcxirewzeqmmxxvowk.supabase.co";
+  var KEY = "sb_publishable_CzJ54kTgvNKIDGSmZ8zFHg_lVe57CLY";
   var SEND_MS = 100, IDLE_MS = 1000, GONE_MS = 4000;
   var client = null;
   try { client = window.supabase.createClient(URL, KEY, { realtime: { params: { eventsPerSecond: 12 } } }); } catch (err) { client = null; }
