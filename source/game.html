@@ -51,9 +51,21 @@ input:focus-visible, button:focus-visible, select:focus-visible { outline: 3px s
 #board li.it .nm { color: var(--it); font-weight: 700; }
 #board .tm { color: var(--ink-dim); }
 #clock {
-  top: calc(64px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); font-family: var(--display); font-size: 18px;
+  top: calc(78px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); font-family: var(--display); font-size: 18px;
   padding: 4px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-variant-numeric: tabular-nums;
 }
+#toast {
+  top: 26%; left: 50%; transform: translateX(-50%); font-family: var(--display); font-size: clamp(22px, 6vw, 40px); padding: 10px 24px;
+  border-radius: 16px; background: var(--panel); border: 1px solid var(--line); white-space: nowrap; max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis;
+}
+#toast.good { background: var(--go); color: var(--go-ink); border-color: transparent; }
+#toast.bad { background: var(--it); color: #fff; border-color: transparent; }
+#toast.info { font-size: clamp(16px, 4vw, 22px); top: 20%; }
+#flash { position: fixed; inset: 0; z-index: 3; pointer-events: none; opacity: 0; }
+#flash.good { background: var(--go); animation: flash 0.6s ease-out; }
+#flash.bad { background: var(--it); animation: flash 0.8s ease-out; }
+@keyframes flash { from { opacity: 0.45; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { #flash.good, #flash.bad { animation: none; } }
 #clock.low { color: var(--it); }
 #over { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 16px; pointer-events: none; background: rgba(8, 5, 20, 0.45); }
 #over .card { width: min(340px, 100%); }
@@ -189,6 +201,8 @@ select option { color: #111; }
 
 <div id="aim" class="hud" hidden></div>
 <div id="clock" class="hud" hidden></div>
+<div id="toast" class="hud" hidden></div>
+<div id="flash"></div>
 <div id="over" hidden>
   <div class="card">
     <h2 id="overT">Round over</h2>
@@ -844,9 +858,19 @@ select option { color: #111; }
 
   // ---------- effects: rings and sound ----------
   var rings = [], ringGeo = new THREE.RingGeometry(0.9, 1, 40);
-  function spawnRing(x, z) {
-    var m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x8fe9ff, transparent: true, side: THREE.DoubleSide }));
-    m.rotation.x = -Math.PI / 2; m.position.set(x, 0.15, z); scene.add(m); rings.push({ m: m, t: 0 });
+  function spawnRing(x, z, color, size) {
+    var m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: color || 0x8fe9ff, transparent: true, side: THREE.DoubleSide }));
+    m.rotation.x = -Math.PI / 2; m.position.set(x, 0.15, z); scene.add(m); rings.push({ m: m, t: 0, max: size || BLAST_R });
+  }
+  // Tag feedback: a big banner, a screen flash and a ring on the ground where it happened.
+  var toastUntil = 0;
+  function announce(text, kind, x, z) {
+    var t = $("toast"), fl = $("flash");
+    t.textContent = text; t.className = "hud " + kind; t.hidden = false; toastUntil = performance.now() + 2600;
+    if (kind !== "info") { fl.className = ""; void fl.offsetWidth; fl.className = kind; }
+    if (x !== undefined) { spawnRing(x, z, kind === "good" ? 0xb6f23c : 0xff3d81, 4); }
+    if (kind === "good") { tone(880, 1320, 0.1, "square", 0.8, 0); tone(1320, 1760, 0.2, "square", 0.8, 0.1); }
+    else if (kind === "info") { tone(700, 500, 0.15, "triangle", 0.5, 0); }
   }
   var ac = null;
   function tone(freq, to, dur, type, vol, delay) {
@@ -984,7 +1008,8 @@ select option { color: #111; }
           dir = Math.atan2(tgt.x - b.x, tgt.z - b.z); speed = speed && 6.4;
           if (speed && best < 1.5 && Math.abs(tgt.y - b.y) < 1.5 && now > b.cd) {
             b.cd = now + 1500;
-            if (tgt.self) { becomeSeeker(FREEZE, false); } else { tgt.seq = maxSeq() + 1; tgt.freeze = now + FREEZE; }
+            if (tgt.self) { becomeSeeker(FREEZE, false); announce(b.name + " tagged you!", "bad", me.x, me.z); }
+            else { tgt.seq = maxSeq() + 1; tgt.freeze = now + FREEZE; announce(b.name + " tagged " + tgt.name, "info", tgt.x, tgt.z); }
           }
         }
         b.t += dt;
@@ -1030,7 +1055,10 @@ select option { color: #111; }
         if (k === undefined || p.ev[name] === k) { return; }
         p.ev[name] = k;
         if (fresh) { return; }          // do not replay what happened before we arrived
-        if (name === "tg" && ev.to === me.id && playing && currentIt === pr.peer) { becomeSeeker(FREEZE, false); }
+        if (name === "tg" && currentIt === pr.peer && playing) {
+          if (ev.to === me.id) { becomeSeeker(FREEZE, false); announce(p.name + " tagged you!", "bad", me.x, me.z); }
+          else if (others[ev.to]) { announce(p.name + " tagged " + others[ev.to].name, "info", others[ev.to].x, others[ev.to].z); }
+        }
         if (name === "rs" && ev.to === me.id && playing) { becomeSeeker(HIDE_TIME, true); }
         if (name === "pk") { var b = mystery[ev.i | 0]; if (b) { b.hideUntil = now + BOX_RESPAWN; } }
         if (name === "fx" && currentIt === pr.peer) {
@@ -1168,7 +1196,7 @@ select option { color: #111; }
     me.seq = 0; me.t = 0; me.vx = me.vz = 0; me.sl = 0; me.tg = me.rs = me.pk = me.fx = me.ta = null;
     held = null; effect = null; frozenUntil = blindUntil = 0; wasIt = false; lastIt = null; netNote = ""; slideUntil = 0;
     try { if (document.pointerLockElement && document.exitPointerLock) { document.exitPointerLock(); } } catch (err) {}
-    ["status", "board", "net", "menuBtn", "actions", "aim", "blind", "stick", "pause", "clock", "over"].forEach(function (id) { $(id).hidden = true; });
+    ["status", "board", "net", "menuBtn", "actions", "aim", "blind", "stick", "pause", "clock", "over", "toast"].forEach(function (id) { $(id).hidden = true; });
     paused = false; me.ho = false;
     camera.fov = opts.fov; camera.updateProjectionMatrix();
     $("play").disabled = false; drawTabs(); $("menu").hidden = false;
@@ -1484,6 +1512,7 @@ select option { color: #111; }
             if (Math.hypot(o.x - me.x, o.z - me.z) < reach && Math.abs(o.y - me.y) < 1.6) {
               tagCooldown = now + 1500;
               if (o.bot) { o.seq = maxSeq() + 1; o.freeze = now + FREEZE; } else { me.tg = { to: o.id, k: ++counters.tg }; }
+              announce("You tagged " + o.name + "!", "good", o.x, o.z);
               break;
             }
           }
@@ -1528,7 +1557,7 @@ select option { color: #111; }
     }
     for (var pd = 0; pd < pads.length; pd++) { var ps = 1 + Math.sin(now / 250 + pd) * 0.08; pads[pd].mesh.scale.set(ps, 1, ps); }
     for (var ri = rings.length - 1; ri >= 0; ri--) {
-      var rg = rings[ri]; rg.t += dt; var sc = 1 + (rg.t / 0.6) * (BLAST_R - 1);
+      var rg = rings[ri]; rg.t += dt; var sc = 1 + (rg.t / 0.6) * ((rg.max || BLAST_R) - 1);
       rg.m.scale.set(sc, sc, sc); rg.m.material.opacity = Math.max(0, 1 - rg.t / 0.6);
       if (rg.t > 0.6) { scene.remove(rg.m); rg.m.material.dispose(); rings.splice(ri, 1); }
     }
@@ -1556,6 +1585,7 @@ select option { color: #111; }
     var st = $("status"), left = Math.ceil((frozenUntil - now) / 1000), blind = now < blindUntil;
     $("blind").hidden = !blind; if (blind) { $("blindN").textContent = String(Math.max(1, left)); }
     st.className = "hud" + (iAmIt && list.length > 1 ? " it" : "");
+    if (now > toastUntil) { $("toast").hidden = true; }
     var ck = $("clock"), secs = Math.ceil(roundLeft), ov = $("over");
     ck.hidden = list.length < 2; ck.className = "hud" + (secs <= 10 ? " low" : "");
     ck.textContent = Math.floor(secs / 60) + ":" + (secs % 60 < 10 ? "0" : "") + (secs % 60);
