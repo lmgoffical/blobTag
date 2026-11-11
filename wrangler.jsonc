@@ -1,0 +1,6 @@
+{
+  // Cloudflare Workers settings: serve this repo as a plain static site.
+  "name": "blobtag",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./" }
+}
